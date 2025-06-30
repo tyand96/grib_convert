@@ -1,0 +1,5 @@
+if(EXISTS "/home/tyler/Documents/tylerGribConvert/cpp/tests/build/grib_tests_tests-b12d07c.cmake")
+  include("/home/tyler/Documents/tylerGribConvert/cpp/tests/build/grib_tests_tests-b12d07c.cmake")
+else()
+  add_test(grib_tests_NOT_BUILT-b12d07c grib_tests_NOT_BUILT-b12d07c)
+endif()

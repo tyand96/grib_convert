@@ -1,0 +1,81 @@
+Start testing: Jun 26 16:32 CEST
+----------------------------------------------------------
+1/3 Testing: GribMessage timezone_to_string function
+1/3 Test: GribMessage timezone_to_string function
+Command: "/home/tyler/Documents/tylerGribConvert/cpp/tests/build/grib_tests" "GribMessage timezone_to_string function"
+Directory: /home/tyler/Documents/tylerGribConvert/cpp/tests/build
+"GribMessage timezone_to_string function" start time: Jun 26 16:32 CEST
+Output:
+----------------------------------------------------------
+Filters: "GribMessage timezone_to_string function"
+Randomness seeded to: 2557118301
+===============================================================================
+All tests passed (4 assertions in 1 test case)
+
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"GribMessage timezone_to_string function" end time: Jun 26 16:32 CEST
+"GribMessage timezone_to_string function" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/3 Testing: GribMessage TimeInfo to_string function
+2/3 Test: GribMessage TimeInfo to_string function
+Command: "/home/tyler/Documents/tylerGribConvert/cpp/tests/build/grib_tests" "GribMessage TimeInfo to_string function"
+Directory: /home/tyler/Documents/tylerGribConvert/cpp/tests/build
+"GribMessage TimeInfo to_string function" start time: Jun 26 16:32 CEST
+Output:
+----------------------------------------------------------
+Filters: "GribMessage TimeInfo to_string function"
+Randomness seeded to: 2729320317
+===============================================================================
+All tests passed (5 assertions in 1 test case)
+
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"GribMessage TimeInfo to_string function" end time: Jun 26 16:32 CEST
+"GribMessage TimeInfo to_string function" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/3 Testing: GribMessage TimeInfo formatting consistency
+3/3 Test: GribMessage TimeInfo formatting consistency
+Command: "/home/tyler/Documents/tylerGribConvert/cpp/tests/build/grib_tests" "GribMessage TimeInfo formatting consistency"
+Directory: /home/tyler/Documents/tylerGribConvert/cpp/tests/build
+"GribMessage TimeInfo formatting consistency" start time: Jun 26 16:32 CEST
+Output:
+----------------------------------------------------------
+Filters: "GribMessage TimeInfo formatting consistency"
+Randomness seeded to: 3220104090
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+grib_tests is a Catch2 v3.4.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+GribMessage TimeInfo formatting consistency
+  Format has correct length
+-------------------------------------------------------------------------------
+/home/tyler/Documents/tylerGribConvert/cpp/tests/src/unit/test_GribMessage.cpp:90
+...............................................................................
+
+/home/tyler/Documents/tylerGribConvert/cpp/tests/src/unit/test_GribMessage.cpp:92: FAILED:
+  REQUIRE( formattedTime.length() == 16 )
+with expansion:
+  17 == 16
+
+===============================================================================
+test cases: 1 | 1 failed
+assertions: 8 | 7 passed | 1 failed
+
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Failed.
+"GribMessage TimeInfo formatting consistency" end time: Jun 26 16:32 CEST
+"GribMessage TimeInfo formatting consistency" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Jun 26 16:32 CEST

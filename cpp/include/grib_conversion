@@ -1,0 +1,7 @@
+#ifndef GRIB_CONVERSION_H
+#define GRIB_CONVERSION_H
+
+#include "./CoordinateSystem.hpp"
+#include "./GribMessage.hpp"
+
+#endif
