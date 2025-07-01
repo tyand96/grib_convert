@@ -1,4 +1,6 @@
 #include <CoordinateSystem.hpp>
+#include <stdexcept>
+#include <unordered_map>
 
 CoordinateSystem::LatLon::LatLon(
     const std::vector<float>& lats,
@@ -14,8 +16,9 @@ bool CoordinateSystem::LatLon::operator!=(const LatLon& other) const {
     return !(*this == other);
 }
 
-CoordinateSystem::CoordinateSystem(const LatLon& coords) {
+CoordinateSystem::CoordinateSystem(const LatLon& coords, GridType gridType) {
     coordinates_ = coords;
+    gridType_ = gridType;
 }
 
 CoordinateSystem::CoordinateSystem(const CoordinateSystem& other)
@@ -26,10 +29,12 @@ CoordinateSystem::CoordinateSystem(CoordinateSystem&& other) noexcept
 
 CoordinateSystem::CoordinateSystem(
     const std::vector<float>& latitudes,
-    const std::vector<float>& longitudes
+    const std::vector<float>& longitudes,
+    GridType gridType
 ) {
     LatLon latlon(latitudes, longitudes);
     coordinates_ = std::move(latlon);
+    gridType_ = gridType;
 }
 
 CoordinateSystem& CoordinateSystem::operator=(const CoordinateSystem& other) {
@@ -52,4 +57,25 @@ bool CoordinateSystem::operator==(const CoordinateSystem& other) const {
 
 bool CoordinateSystem::operator!=(const CoordinateSystem& other) const {
     return !(*this == other);
+}
+
+std::string CoordinateSystem::getGridTypeString() const {
+    switch (gridType_) {
+        case GridType::REGULAR_LATLON:
+            return "regular_ll";
+        default:
+            throw std::invalid_argument("Invalid grid type.");
+    }
+}
+
+CoordinateSystem::GridType CoordinateSystem::stringToGridType(const std::string& gridTypeStr) {
+    std::unordered_map<std::string, GridType> gridMap = {
+        {"regular_ll", GridType::REGULAR_LATLON}
+    };
+
+    auto it = gridMap.find(gridTypeStr);
+    if (it != gridMap.end()) {
+        return it->second;
+    }
+    throw std::invalid_argument("Invalid grid type string: " + gridTypeStr);
 }

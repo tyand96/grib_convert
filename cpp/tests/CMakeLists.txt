@@ -15,8 +15,11 @@ if(NOT DEFINED PROJECT_NAME)
         "${MAIN_PROJECT_DIR}/cpp/src/*.cpp"
     )
 
+    find_package(eccodes REQUIRED)
+
     add_library(grib_convert ${LIB_SOURCES})
     target_include_directories(grib_convert PUBLIC ${MAIN_PROJECT_DIR}/cpp/include)
+    target_link_libraries(grib_convert PRIVATE eccodes)
 
     enable_testing()
 else()

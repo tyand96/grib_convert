@@ -28,8 +28,25 @@ struct TimeInfo {
 
     bool operator==(const TimeInfo& other) const;
     bool operator!=(const TimeInfo& other) const;
+
+    friend struct std::hash<TimeInfo>;
 };
 
 std::string timezone_to_string(Timezone tz);
+
+namespace std {
+    template<>
+    struct hash<TimeInfo> {
+        size_t operator()(const TimeInfo& t) const {
+            size_t h1 = std::hash<unsigned int>{}(t.year);
+            size_t h2 = std::hash<unsigned int>{}(t.month);
+            size_t h3 = std::hash<unsigned int>{}(t.day);
+            size_t h4 = std::hash<unsigned int>{}(t.hour);
+            size_t h5 = std::hash<int>{}(static_cast<int>(t.timezone));
+
+            return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3) ^ (h5 << 4);
+        }
+    };
+}
 
 #endif // TIME_INFO_HPP

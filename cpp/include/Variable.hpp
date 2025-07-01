@@ -10,6 +10,7 @@ enum class Variable {
 
 Variable variable_from_name(const std::string& varName);
 Variable variable_from_code(const unsigned int varCode);
+std::string variable_as_string(Variable variable);
 
 
 #endif // VARIABLE_HPP

@@ -28,3 +28,14 @@ Variable variable_from_code(const unsigned int varCode) {
     }
     throw std::invalid_argument("Uknown variable code: " + std::to_string(varCode));
 }
+
+std::string variable_as_string(Variable variable) {
+    switch (variable) {
+        case Variable::M10:
+            return "10m_wind_speed";
+        case Variable::T2:
+            return "2m_temperature";
+        default:
+            throw std::invalid_argument("Invalid variable.");
+    }
+}

@@ -7,10 +7,13 @@
 #include <set>
 #include <functional>
 #include <list>
+#include <eccodes.h>
 
 #include "./Center.hpp"
 #include "./Variable.hpp"
 #include "./CoordinateSystem.hpp"
+#include "./TimeInfo.hpp"
+#include "./EnsembleInfo.hpp"
 
 class GribMessage;
 
@@ -23,6 +26,9 @@ public:
         size_t estimatedMemorySize;
         CoordinateSystem coordinates;
         bool hasConsistentGrid;
+
+        bool operator==(const Metadata& other) const;
+        bool operator!=(const Metadata& other) const;
     };
 
     class Iterator {
@@ -40,8 +46,7 @@ public:
         mutable std::shared_ptr<GribMessage> currentMessage_;
     };
 
-    GribFile();
-    explicit GribFile(const std::string& filepath);
+    explicit GribFile(std::string filepath);
     GribFile(const GribFile& other);
     GribFile(GribFile&& other) noexcept;
     GribFile operator=(const GribFile& other);
@@ -55,6 +60,7 @@ public:
     Iterator end();
     void exportToNetCDF(const std::string& outputPath, size_t batchSize = 100) const;
 
+    const std::string& getFilePath() const { return filepath_; };
     const Metadata& getMetadata() const { return metadata_; };
     bool isValid() const;
     size_t getMessageCount() const { return metadata_.totalMessages; };
@@ -80,6 +86,10 @@ private:
     std::unique_ptr<MessageCache> messageCache_;
 
     void loadMetadata();
+    CoordinateSystem extractCoordinateSystem(codes_handle* h) const;
+    CoordinateSystem extractRegularGrid(codes_handle* h) const;
+    TimeInfo extractTimeInfo(codes_handle* h) const;
+    EnsembleInfo extractEnsembleInfo(codes_handle *h) const;
     bool validateMessageCompatibililty() const;
     std::vector<std::string> getCompatibilityIssues() const;
     std::shared_ptr<GribMessage> loadMessage(size_t index);

@@ -1,6 +1,8 @@
 #ifndef CENTER_HPP
 #define CENTER_HPP
 
+#include <string>
+
 enum class Center {
     CMCC,
     DWD,
@@ -14,5 +16,7 @@ enum class Center {
 };
 
 Center center_from_code(unsigned int centerCode);
+
+std::string center_as_string(Center center);
 
 #endif // CENTER_HPP
