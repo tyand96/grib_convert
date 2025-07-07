@@ -4,66 +4,156 @@
 #include <CoordinateSystem.hpp>
 #include <stdexcept>
 
-TEST_CASE("LatLon Creation", "[CoordinateSystem]") {
-    SECTION("Default Constructor") {
-        CoordinateSystem::LatLon latlon;
-        REQUIRE(latlon.latitudes.size() == 0);
-        REQUIRE(latlon.longitudes.size() == 0);
+TEST_CASE("Point Equality", "[Point]") {
+    SECTION("Equal Points") {
+        Point p1{1.0f, 2.0f};
+        Point p2{1.0f, 2.0f};
+        REQUIRE(p1 == p2);
     }
 
-    SECTION("Constructor with lat/lons") {
-        std::vector<float> lats = {1, 2, 3};
-        std::vector<float> lons = {4, 5, 6};
-        CoordinateSystem::LatLon latlons(lats, lons);
-        
-        REQUIRE(latlons.latitudes == lats);
-        REQUIRE(latlons.longitudes == lons);
+    SECTION("Unequal Points") {
+        Point p1{1.0f, 2.0f};
+        Point p2{3.0f, 4.0f};
+        REQUIRE_FALSE(p1 == p2);
+    }
+}
+
+TEST_CASE("Grid Functionality", "[Grid]") {
+    SECTION("Equality") {
+        CoordinateSystem::Grid grid1;
+        grid1.points.insert({1.0f, 2.0f});
+        grid1.points.insert({3.0f, 4.0f});
+
+        CoordinateSystem::Grid grid2;
+        grid2.points.insert({1.0f, 2.0f});
+        grid2.points.insert({3.0f, 4.0f});
+
+        REQUIRE(grid1 == grid2);
     }
 
-    SECTION("Copy") {
-        std::vector<float> lats = {1, 2, 3};
-        std::vector<float> lons = {4, 5, 6};
-        CoordinateSystem::LatLon latlons1(lats, lons);
-        auto latlons2 = latlons1;
-        
-        REQUIRE(latlons1.latitudes == latlons2.latitudes);
-        REQUIRE(latlons1.longitudes == latlons2.longitudes);
+    SECTION("Inequality") {
+        CoordinateSystem::Grid grid1;
+        grid1.points.insert({1.0f, 2.0f});
+        grid1.points.insert({3.0f, 4.0f});
+
+        CoordinateSystem::Grid grid2;
+        grid2.points.insert({1.0f, 2.0f});
+        grid2.points.insert({5.0f, 6.0f});
+
+        REQUIRE_FALSE(grid1 == grid2);
+        REQUIRE(grid1 != grid2);
+    }
+
+    SECTION("Point Validity") {
+        CoordinateSystem::Grid grid;
+        grid.points.insert({1.0f, 2.0f});
+        grid.points.insert({3.0f, 4.0f});
+
+        REQUIRE(grid.isPointValid(1.0f, 2.0f));
+        REQUIRE_FALSE(grid.isPointValid(5.0f, 6.0f));
+    }
+
+    SECTION("Contains") {
+        CoordinateSystem::Grid grid1;
+        grid1.points.insert({1.0f, 2.0f});
+        grid1.points.insert({3.0f, 4.0f});
+
+        CoordinateSystem::Grid grid2;
+        grid2.points.insert({1.0f, 2.0f});
+
+        REQUIRE(grid1.contains(grid2));
+        REQUIRE_FALSE(grid2.contains(grid1));
+    }
+
+    SECTION("Overlaps") {
+        CoordinateSystem::Grid grid1;
+        grid1.points.insert({1.0f, 2.0f});
+        grid1.points.insert({3.0f, 4.0f});
+
+        CoordinateSystem::Grid grid2;
+        grid2.points.insert({3.0f, 4.0f});
+        grid2.points.insert({5.0f, 6.0f});
+
+        REQUIRE(grid1.overlaps(grid2));
+        REQUIRE(grid2.overlaps(grid1));
+
+        CoordinateSystem::Grid grid3;
+        grid3.points.insert({7.0f, 8.0f});
+
+        REQUIRE_FALSE(grid1.overlaps(grid3));
+    }
+
+    SECTION("Clone") {
+        CoordinateSystem::Grid grid;
+        grid.points.insert({1.0f, 2.0f});
+        grid.points.insert({3.0f, 4.0f});
+
+        auto clonedGrid = grid.clone();
+        REQUIRE(*clonedGrid == grid);
+
+        // Change the second grid
+        clonedGrid->points.insert({5.0f, 6.0f});
+        REQUIRE_FALSE(*clonedGrid == grid); // They should not be equal anymore
+    }
+
+    SECTION("Create Regular Grid") {
+        auto grid = CoordinateSystem::Grid::createRegularGrid(
+            std::unordered_set<float>{1.0f, 2.0f, 3.0f},
+            std::unordered_set<float>{4.0f, 5.0f, 6.0f}
+        );
+
+        REQUIRE(grid.points.size() == 9); // 3 latitudes * 3 longitudes
+        REQUIRE(grid.isPointValid(1.0f, 4.0f));
+        REQUIRE(grid.isPointValid(2.0f, 5.0f));
+        REQUIRE_FALSE(grid.isPointValid(7.0f, 8.0f));
     }
 }
 
 TEST_CASE("Coordinate System Construction", "[CoordinateSystem]") {
     SECTION("Default") {
         CoordinateSystem coords;
-        CoordinateSystem::LatLon latlons;
+        std::unordered_set<Point> points;
 
-        REQUIRE(coords.getCoords() == latlons);
+        REQUIRE(coords.getGridType() == CoordinateSystem::GridType::UNDEFINED);
+        REQUIRE(coords.getGrid() == nullptr);
     }
 
-    SECTION("Constructor with LatLon") {
-        CoordinateSystem::LatLon latlons(
-            std::vector<float>{1, 2, 3},
-            std::vector<float>{4, 5, 6}
+    SECTION("Constructor with Grid") {
+        CoordinateSystem::Grid grid = CoordinateSystem::Grid::createRegularGrid(
+            std::unordered_set<float>{1, 2, 3},
+            std::unordered_set<float>{4, 5, 6}
         );
-        CoordinateSystem coords(latlons);
+        CoordinateSystem coords(
+            grid.clone(),
+            CoordinateSystem::GridType::REGULAR_LATLON
+        );
 
-        REQUIRE(coords.getCoords() == latlons);
+        REQUIRE(coords.getGridType() == CoordinateSystem::GridType::REGULAR_LATLON);
+        REQUIRE(*coords.getGrid() == grid);
     }
 
-    SECTION("Constructor with vectors") {
-        std::vector<float> lats = {1, 2, 3};
-        std::vector<float> lons = {4, 5, 6};
-        CoordinateSystem coords(lats, lons);
+    SECTION("Constructor with Points") {
+        std::unordered_set<Point> points = {
+            {1.0f, 4.0f},
+            {2.0f, 5.0f},
+            {3.0f, 6.0f}
+        };
+        CoordinateSystem::Grid grid;
+        grid.points = points;
+        CoordinateSystem coords(
+            std::make_unique<CoordinateSystem::Grid>(grid),
+            CoordinateSystem::GridType::REGULAR_LATLON
+        );
 
-        auto latlons = coords.getCoords();
+        REQUIRE(coords.getGridType() == CoordinateSystem::GridType::REGULAR_LATLON);
+        REQUIRE(coords.getGrid()->points == points);
 
-        REQUIRE(latlons.latitudes == lats);
-        REQUIRE(latlons.longitudes == lons);
     }
 
     SECTION("Copy") {
-        CoordinateSystem coords(
-            std::vector<float>{1,2,3},
-            std::vector<float>{4,5,6}
+        CoordinateSystem coords = CoordinateSystem::createRegularGrid(
+            std::unordered_set<float>{1, 2, 3},
+            std::unordered_set<float>{4, 5, 6}
         );
 
         auto coords2 = coords;
@@ -72,44 +162,41 @@ TEST_CASE("Coordinate System Construction", "[CoordinateSystem]") {
     }
 
     SECTION("Move") {
-        std::vector<float> lats = {1,2,3};
-        std::vector<float> lons = {4,5,6};
-
-        CoordinateSystem coords(lats, lons);
+        CoordinateSystem coords = CoordinateSystem::createRegularGrid(
+            std::unordered_set<float>{1, 2, 3},
+            std::unordered_set<float>{4, 5, 6}
+        );
 
         CoordinateSystem coords2 = std::move(coords);
 
-        auto latlons = coords2.getCoords();
-
-        REQUIRE(latlons.latitudes == lats);
-        REQUIRE(latlons.longitudes == lons);
+        REQUIRE(coords2.getGridType() == CoordinateSystem::GridType::REGULAR_LATLON);
+        REQUIRE(coords2.getGrid() != nullptr);
+        REQUIRE(coords2.getGrid()->points.size() == 9); // 3 latitudes
     }
 }
 
 TEST_CASE("Comparisons") {
     SECTION("Equality") {
-        CoordinateSystem coords1(
-            std::vector<float>{1,2,3},
-            std::vector<float>{4,5,6}
+        CoordinateSystem coords1 = CoordinateSystem::createRegularGrid(
+            std::unordered_set<float>{1, 2, 3},
+            std::unordered_set<float>{4, 5, 6}
         );
-
-        CoordinateSystem coords2(
-            std::vector<float>{1,2,3},
-            std::vector<float>{4,5,6}
+        CoordinateSystem coords2 = CoordinateSystem::createRegularGrid(
+            std::unordered_set<float>{1, 2, 3},
+            std::unordered_set<float>{4, 5, 6}
         );
 
         REQUIRE(coords1 == coords2);
     }
 
     SECTION("Inequality") {
-        CoordinateSystem coords1(
-            std::vector<float>{1,2,3},
-            std::vector<float>{4,5,6}
+        CoordinateSystem coords1 = CoordinateSystem::createRegularGrid(
+            std::unordered_set<float>{1, 2, 3},
+            std::unordered_set<float>{4, 5, 6}
         );
-
-        CoordinateSystem coords2(
-            std::vector<float>{1,2,7},
-            std::vector<float>{4,5,6}
+        CoordinateSystem coords2 = CoordinateSystem::createRegularGrid(
+            std::unordered_set<float>{1, 2, 7},
+            std::unordered_set<float>{4, 5, 6}
         );
 
         REQUIRE(coords1 != coords2);

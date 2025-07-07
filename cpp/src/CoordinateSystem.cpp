@@ -1,70 +1,177 @@
 #include <CoordinateSystem.hpp>
 #include <stdexcept>
 #include <unordered_map>
+#include <set>
 
-CoordinateSystem::LatLon::LatLon(
-    const std::vector<float>& lats,
-    const std::vector<float>& lons
-): latitudes(lats), longitudes(lons) {}
-
-bool CoordinateSystem::LatLon::operator==(const LatLon& other) const {
-    return latitudes == other.latitudes &&
-        longitudes == other.longitudes;
+bool Point::operator==(const Point& other) const {
+    return latitude == other.latitude &&
+            longitude == other.longitude;
 }
 
-bool CoordinateSystem::LatLon::operator!=(const LatLon& other) const {
+bool Point::operator!=(const Point& other) const {
     return !(*this == other);
 }
 
-CoordinateSystem::CoordinateSystem(const LatLon& coords, GridType gridType) {
-    coordinates_ = coords;
+bool CoordinateSystem::Grid::isPointValid(float latitude, float longitude) const {
+    return points.find({latitude, longitude}) != points.end();
+}
+
+bool CoordinateSystem::Grid::isPointValid(const Point& point) const {
+    return points.find(point) != points.end();
+}
+
+bool CoordinateSystem::Grid::contains(const Grid& other) const {
+    for (const auto& point : other.points) {
+        if (!isPointValid(point)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool CoordinateSystem::Grid::overlaps(const Grid& other) const {
+    for (const auto& point : other.points) {
+        if (isPointValid(point)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::unique_ptr<CoordinateSystem::Grid> CoordinateSystem::Grid::clone() const {
+    auto clonedGrid = std::make_unique<Grid>();
+    clonedGrid->points = points; // Copy the points.
+    return clonedGrid;
+}
+
+CoordinateSystem::Grid CoordinateSystem::Grid::createRegularGrid(
+    const std::unordered_set<float>& latitudes,
+    const std::unordered_set<float>& longitudes
+) {
+    Grid grid;
+    for (const auto& lat : latitudes) {
+        for (const auto& lon : longitudes) {
+            grid.points.insert({lat, lon});
+        }
+    }
+    return grid;
+}
+
+CoordinateSystem::CoordinateSystem()
+    : grid_(nullptr),
+        gridType_(GridType::UNDEFINED) {}
+
+CoordinateSystem::CoordinateSystem(std::unique_ptr<Grid> grid, GridType gridType) {
+    if (!grid) {
+        throw std::invalid_argument("Grid cannot be null.");
+    }
+
+    if (gridType == GridType::UNDEFINED) {
+        throw std::invalid_argument("Grid type cannot be UNDEFINED.");
+    }
+
+    grid_ = std::move(grid);
     gridType_ = gridType;
+}
+
+CoordinateSystem CoordinateSystem::createRegularGrid(
+    const std::unordered_set<float>& latitudes,
+    const std::unordered_set<float>& longitudes
+) {
+    return CoordinateSystem(
+        std::make_unique<Grid>(Grid::createRegularGrid(
+            latitudes, longitudes
+        )),
+        GridType::REGULAR_LATLON
+    );
 }
 
 CoordinateSystem::CoordinateSystem(const CoordinateSystem& other)
-    : coordinates_(other.coordinates_) {}
+    : grid_(other.grid_ ? other.grid_->clone() : nullptr),
+        gridType_(other.gridType_)
+        {}
 
 CoordinateSystem::CoordinateSystem(CoordinateSystem&& other) noexcept
-    : coordinates_(std::move(other.coordinates_)) {}
-
-CoordinateSystem::CoordinateSystem(
-    const std::vector<float>& latitudes,
-    const std::vector<float>& longitudes,
-    GridType gridType
-) {
-    LatLon latlon(latitudes, longitudes);
-    coordinates_ = std::move(latlon);
-    gridType_ = gridType;
-}
+    : grid_(std::move(other.grid_)),
+        gridType_(other.gridType_)
+        {}
 
 CoordinateSystem& CoordinateSystem::operator=(const CoordinateSystem& other) {
     if (this != &other) {
-        coordinates_ = other.coordinates_;
+        grid_ = other.grid_ ? other.grid_->clone() : nullptr;
+        gridType_ = other.gridType_;
     }
     return *this;
 }
 
 CoordinateSystem& CoordinateSystem::operator=(CoordinateSystem&& other) noexcept {
     if (this != &other) {
-        coordinates_ = std::move(other.coordinates_);
+        grid_ = std::move(other.grid_);
+        gridType_ = other.gridType_;
+        other.gridType_ = GridType::UNDEFINED; // Reset the moved-from object
+        other.grid_ = nullptr; // Reset the moved-from object   
     }
     return *this;
 }
 
 bool CoordinateSystem::operator==(const CoordinateSystem& other) const {
-    return coordinates_ == other.coordinates_;
+    return gridType_ == other.gridType_ &&
+        ((grid_ && other.grid_) ? (*grid_ == *other.grid_) : (grid_ == other.grid_));
 }
 
 bool CoordinateSystem::operator!=(const CoordinateSystem& other) const {
     return !(*this == other);
 }
 
+bool CoordinateSystem::overlaps(const CoordinateSystem& other) const {
+    if (!grid_ || !other.grid_) {
+        return false;
+    }
+    return grid_->overlaps(*other.grid_);
+}
+
+bool CoordinateSystem::contains(const CoordinateSystem& other) const {
+    if (!grid_ || !other.grid_) {
+        return false;
+    }
+    return grid_->contains(*other.grid_);
+}
+
+CoordinateSystem CoordinateSystem::combine(const CoordinateSystem& other) const {
+    auto combinedGrid = grid_->clone();
+    if (other.grid_) {
+        combinedGrid->points.insert(other.grid_->points.begin(), other.grid_->points.end());
+    }
+    GridType combinedGridType = (gridType_ == other.gridType_) ? gridType_ : GridType::COMPOSITE;
+    return CoordinateSystem(
+        std::move(combinedGrid),
+        combinedGridType
+    );
+}
+
+bool CoordinateSystem::isPointValid(float latitude, float longitude) const {
+    if (!grid_) {
+        return false;
+    }
+    return grid_->isPointValid(latitude, longitude);
+}
+
+bool CoordinateSystem::isPointValid(const Point& point) const {
+    if (!grid_) {
+        return false;
+    }
+    return grid_->isPointValid(point);
+}
+
 std::string CoordinateSystem::getGridTypeString() const {
     switch (gridType_) {
         case GridType::REGULAR_LATLON:
             return "regular_ll";
+        case GridType::COMPOSITE:
+            return "composite";
+        case GridType::UNDEFINED:
         default:
-            throw std::invalid_argument("Invalid grid type.");
+            return "undefined";
     }
 }
 

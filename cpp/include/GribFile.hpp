@@ -7,6 +7,9 @@
 #include <set>
 #include <functional>
 #include <list>
+#include <tuple>
+#include <unordered_map>
+#include <set>
 #include <eccodes.h>
 
 #include "./Center.hpp"
@@ -16,6 +19,33 @@
 #include "./EnsembleInfo.hpp"
 
 class GribMessage;
+
+namespace std {
+    template<>
+    struct hash<std::tuple<TimeInfo, unsigned int, Variable, Center>> {
+        size_t operator()(const std::tuple<TimeInfo, unsigned int, Variable, Center>& key) const {
+            const auto& [timeInfo, memberNumber, variable, center] = key;
+            size_t h1 = std::hash<TimeInfo>{}(timeInfo);
+            size_t h2 = std::hash<unsigned int>{}(memberNumber);
+            size_t h3 = std::hash<Variable>{}(variable);
+            size_t h4 = std::hash<Center>{}(center);
+
+            return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3);
+        }
+    };
+}
+
+enum class ValidationMode {
+    AUTO,  // Validate only if not previously validated
+    FORCE,  // Always validate, regardless of previous validation
+    SKIP    // Skip validation entirely (unsafe, but fast)
+};
+
+enum class ValidationStatus {
+    NOT_VALIDATED,
+    PASSED,
+    FAILED
+};
 
 class GribFile {
 public:
@@ -58,18 +88,22 @@ public:
 
     Iterator begin();
     Iterator end();
-    void exportToNetCDF(const std::string& outputPath, size_t batchSize = 100) const;
+    void toNetCDF(const std::string& outputPath, size_t batchSize = 100) const;
+
+    bool validateGridConsistency() const;
 
     const std::string& getFilePath() const { return filepath_; };
     const Metadata& getMetadata() const { return metadata_; };
     bool isValid() const;
     size_t getMessageCount() const { return metadata_.totalMessages; };
+    unsigned int getEstimatedMemorySize() const { return metadata_.estimatedMemorySize; };
     std::vector<Variable> getVariables() const;
     CoordinateSystem getCoordinateSystem() const;
 
 private:
     std::string filepath_;
     Metadata metadata_;
+    mutable ValidationStatus validationStatus_ = ValidationStatus::NOT_VALIDATED;
 
     struct MessageCache {
         static constexpr size_t MAX_CACHE_SIZE = 10;
@@ -90,12 +124,16 @@ private:
     CoordinateSystem extractRegularGrid(codes_handle* h) const;
     TimeInfo extractTimeInfo(codes_handle* h) const;
     EnsembleInfo extractEnsembleInfo(codes_handle *h) const;
-    bool validateMessageCompatibililty() const;
     std::vector<std::string> getCompatibilityIssues() const;
     std::shared_ptr<GribMessage> loadMessage(size_t index);
     std::vector<size_t> getMessageIndicesByVariable(const Variable& var) const;
     void processMessageBatch(const std::vector<size_t>& indices, std::function<void(const GribMessage&)> processor);
-    
+
+    using DimensionKey = std::tuple<TimeInfo, unsigned int, Variable, Center>;
+    using DimensionMap = std::unordered_map<DimensionKey, CoordinateSystem>;
+    bool validateMessageCompatibility(codes_handle* handle, DimensionMap& coverage) const;
+    bool performSequentialValidation(const std::string& filepath) const;
+    bool performParallelValidation(const std::string& filepath) const;    
 };
 
 #endif // GRIB_FILE_HPP

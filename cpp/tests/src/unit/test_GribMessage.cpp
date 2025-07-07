@@ -9,10 +9,10 @@ TEST_CASE("GribMessage Construction", "[GribMessage]") {
         TimeInfo forecastTime(2020, 8);
         TimeInfo ensInitTime(2020, 7, 30);
         EnsembleInfo ens(1, ensInitTime);
-        std::vector<float> data = {1, 2, 3};
-        CoordinateSystem coords(
-            std::vector<float>{-90, 90},
-            std::vector<float>{0, 360}
+        std::vector<float> data = {1, 2, 3, 4};
+        CoordinateSystem coords = CoordinateSystem::createRegularGrid(
+            std::unordered_set<float>{-90, 90},
+            std::unordered_set<float>{0, 360}
         );
         GribMessage gm(forecastTime, ens, data, coords, Variable::M10, Center::NCEP);
 
@@ -28,10 +28,10 @@ TEST_CASE("GribMessage Construction", "[GribMessage]") {
         TimeInfo forecastTime(2020, 8);
         TimeInfo ensInitTime(2020, 7, 30);
         EnsembleInfo ens(1, ensInitTime);
-        std::vector<float> data = {1, 2, 3};
-        CoordinateSystem coords(
-            std::vector<float>{-90, 90},
-            std::vector<float>{0, 360}
+        std::vector<float> data = {1, 2, 3, 4};
+        CoordinateSystem coords = CoordinateSystem::createRegularGrid(
+            std::unordered_set<float>{-90, 90},
+            std::unordered_set<float>{0, 360}
         );
         GribMessage gm(forecastTime, ens, data, coords, Variable::M10, Center::NCEP);
 
@@ -49,10 +49,10 @@ TEST_CASE("GribMessage Construction", "[GribMessage]") {
         TimeInfo forecastTime(2020, 8);
         TimeInfo ensInitTime(2020, 7, 30);
         EnsembleInfo ens(1, ensInitTime);
-        std::vector<float> data = {1, 2, 3};
-        CoordinateSystem coords(
-            std::vector<float>{-90, 90},
-            std::vector<float>{0, 360}
+        std::vector<float> data = {1, 2, 3, 4};
+        CoordinateSystem coords = CoordinateSystem::createRegularGrid(
+            std::unordered_set<float>{-90, 90},
+            std::unordered_set<float>{0, 360}
         );
         GribMessage gm(forecastTime, ens, data, coords, Variable::M10, Center::NCEP);
 

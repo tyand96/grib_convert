@@ -142,7 +142,6 @@ void GribFile::loadMetadata() {
 
         if (firstMessage) {
             firstGridType = currentGridType;
-            metadata_.coordinates = extractCoordinateSystem(h);
             firstMessage = false;
         } else if (currentGridType != firstGridType) {
             metadata_.hasConsistentGrid = false;
@@ -173,10 +172,19 @@ void GribFile::loadMetadata() {
             messageCache_->add(cachedCount, std::move(message));
             cachedCount++;
         }
+
     }
 
     if (err != CODES_SUCCESS && err != CODES_END_OF_FILE) {
         throw std::runtime_error("Error reading GRIB file: " + std::to_string(err));
+    }
+
+    if (messageCount == 0) {
+        throw std::runtime_error("No valid GRIB messages found in file: " + filepath_);
+    }
+
+    if (!metadata_.hasConsistentGrid) {
+        throw std::runtime_error("Warning: Inconsistent grid types found in GRIB file: " + filepath_);
     }
 
     metadata_.totalMessages = messageCount;
@@ -191,9 +199,8 @@ void GribFile::loadMetadata() {
         std::cout << variable_as_string(v) << std::endl;
     }
 
-    if (metadata_.hasConsistentGrid && metadata_.totalMessages > 0) {
-        metadata_.hasConsistentGrid = validateMessageCompatibililty();
-    }
+    std::cout << getEstimatedMemorySize() << " bytes estimated memory size." << std::endl;
+    std::cout << getMessageCount() << " messages found in file." << std::endl;
 }
 
 CoordinateSystem GribFile::extractCoordinateSystem(codes_handle* h) const {
@@ -233,8 +240,8 @@ CoordinateSystem GribFile::extractRegularGrid(codes_handle* h) const {
     bool jScansPositively = (scanningMode & 64) != 0;
 
     // Generate coordinates
-    std::vector<float> latitudes;
-    std::vector<float> longitudes;
+    std::unordered_set<float> latitudes;
+    std::unordered_set<float> longitudes;
 
     // Generate longitudes
     longitudes.reserve(ni);
@@ -247,7 +254,7 @@ CoordinateSystem GribFile::extractRegularGrid(codes_handle* h) const {
         while (lon < 0) lon += 360.0;
         while (lon >= 360.0) lon -= 360.0;
 
-        longitudes.push_back(static_cast<float>(lon));
+        longitudes.insert(static_cast<float>(lon));
     }
 
     // Generate latitudes
@@ -256,12 +263,11 @@ CoordinateSystem GribFile::extractRegularGrid(codes_handle* h) const {
             lat1 + j * latIncrement :
             lat1 - j * latIncrement;
 
-        latitudes.push_back(static_cast<float>(lat));
+        latitudes.insert(static_cast<float>(lat));
     }
 
-    return CoordinateSystem(
-        latitudes, longitudes,
-        CoordinateSystem::GridType::REGULAR_LATLON
+    return CoordinateSystem::createRegularGrid(
+        latitudes, longitudes
     );
 }
 
@@ -341,10 +347,101 @@ EnsembleInfo GribFile::extractEnsembleInfo(codes_handle* h) const {
     return ensInfo;
 }
 
-bool GribFile::validateMessageCompatibililty() const {
+bool GribFile::validateMessageCompatibility(codes_handle* handle, GribFile::DimensionMap& dimensionCoverage) const {
+    if (!handle) {
+        return false;
+    }
+
+    bool coordsEverywhere = true;
+
+    // Extract dimensions from the current message
+    TimeInfo timeInfo = extractTimeInfo(handle);
+    EnsembleInfo ensInfo = extractEnsembleInfo(handle);
+
+    long varCode = 0;
+    CODES_CHECK(codes_get_long(handle, "indicatorOfParameter", &varCode), 0);
+    Variable variable = variable_from_code(varCode);
+
+    long centerCode = 0;
+    CODES_CHECK(codes_get_long(handle, "centre", &centerCode), 0);
+    Center center = center_from_code(centerCode);
+
+    DimensionKey key = std::make_tuple(timeInfo, ensInfo.memberNumber, variable, center);
+
+    CoordinateSystem coords = extractCoordinateSystem(handle);
+
+    // Add the coordinates to the dimension coverage map
+    if (dimensionCoverage.find(key) == dimensionCoverage.end()) {
+        // If this key is not in the map, create a new entry
+        dimensionCoverage[key] = coords;
+    } else {
+        dimensionCoverage[key] = dimensionCoverage[key].combine(coords);
+    }
+
+    for (const auto& keys : dimensionCoverage) {
+        if (keys.first == key) {
+            continue; // Skip the same key
+        }
+
+        if (!keys.second.contains(coords)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// CoordinateSystem::LatLon GribFile::distillLatLon() const {
+//     CoordinateSystem::LatLon latLon;
+
+//     // Collect all unique latitudes and longitudes from the dimension coverage
+//     std::unordered_set<float> uniqueLats;
+//     std::unordered_set<float> uniqueLons;
+
+//     for (const auto& entry : dimensionCoverage_) {
+//         for (const auto& coord : entry.second) {
+//             uniqueLats.insert(coord.first);
+//             uniqueLons.insert(coord.second);
+//         }
+//     }
+
+//     // Convert to vectors
+//     latLon.latitudes.assign(uniqueLats.begin(), uniqueLats.end());
+//     latLon.longitudes.assign(uniqueLons.begin(), uniqueLons.end());
+
+//     return latLon;
+// }
+
+bool GribFile::validateGridConsistency() const {
+    switch (validationStatus_) {
+        case ValidationStatus::NOT_VALIDATED: {
+            size_t messageCount = getMessageCount();
+
+            if (messageCount <= 1000) {
+                // Perform sequential validation
+                bool result = performSequentialValidation(filepath_);
+                validationStatus_ = result ? ValidationStatus::PASSED : ValidationStatus::FAILED;
+                return result;
+            }
+
+            // For larger files, use parallel validation.
+            bool result = performParallelValidation(filepath_);
+            validationStatus_ = result ? ValidationStatus::PASSED : ValidationStatus::FAILED;
+            return result;
+        }
+            break;
+        default: {
+            // Already validated, return the cached result.
+            return validationStatus_ == ValidationStatus::PASSED;
+        }     
+    }
+}
+
+bool GribFile::performSequentialValidation(const std::string& filepath) const {
+    // Open the GRIB file using eccodes.
+    int err = 0;
     FILE* file = fopen(filepath_.c_str(), "rb");
     if (!file) {
-        throw std::runtime_error("Unable to open GRIB file: " + filepath_);
+        throw std::runtime_error("Failed to open GRIB file: " + filepath_);
     }
 
     auto fileGuard = [](FILE* file) { 
@@ -352,16 +449,8 @@ bool GribFile::validateMessageCompatibililty() const {
     };
     std::unique_ptr<FILE, decltype(fileGuard)> fileCleanup(file, fileGuard);
 
-    int err = 0;
     codes_handle* h = nullptr;
-
-    // Sets to collect all unique coordinate values
-    std::unordered_set<TimeInfo> allTimes;
-    std::unordered_set<unsigned int> allEnsembleMembers;
-    std::unordered_set<Variable> allVariables;
-    std::unordered_set<Center> allCenters;
-    CoordinateSystem referenceCoords;
-    bool isFirstMessage = true;
+    bool hasConsistentGrid = true;
 
     while ((h = codes_handle_new_from_file(nullptr, file, PRODUCT_GRIB, &err)) != nullptr) {
         auto handleGuard = [](codes_handle* handle) {
@@ -370,53 +459,27 @@ bool GribFile::validateMessageCompatibililty() const {
         std::unique_ptr<codes_handle, decltype(handleGuard)> handleCleanup(h, handleGuard);
 
         if (err != CODES_SUCCESS) {
-            return false;
+            throw std::runtime_error("Error reading GRIB message: " + std::to_string(err));
         }
 
-        TimeInfo timeInfo = extractTimeInfo(h);
-        allTimes.insert(timeInfo);
-
-        // Extract ensemble information
-        EnsembleInfo ensInfo = extractEnsembleInfo(h);
-        allEnsembleMembers.insert(ensInfo.memberNumber);
-
-        // Extract variable information
-        long varCode = 0;
-        CODES_CHECK(codes_get_long(h, "indicatorOfParameter", &varCode), 0);
-        Variable variable = variable_from_code(varCode);
-        allVariables.insert(variable);
-
-        // Extract center information
-        long centerCode = 0;
-        CODES_CHECK(codes_get_long(h, "centre", &centerCode), 0);
-        Center center = center_from_code(centerCode);
-        allCenters.insert(center);
-
-        // Check grid compatibility
-        CoordinateSystem currentCoords = extractCoordinateSystem(h);
-        if (isFirstMessage) {
-            referenceCoords = currentCoords;
-            isFirstMessage = false;
-        } else if (currentCoords != referenceCoords) {
-            return false;
-        }
+        // Validate the message compatibility
+        DimensionMap coverage;
+        hasConsistentGrid = validateMessageCompatibility(h, coverage);
     }
 
     if (err != CODES_SUCCESS && err != CODES_END_OF_FILE) {
-        return false;
+        throw std::runtime_error("Error reading GRIB file: " + std::to_string(err));
     }
 
-    // Reset the file position
-    rewind(file);
-
-    // Count the expected combinations vs actual messages
-    size_t expectedCombinations = allTimes.size() * allEnsembleMembers.size() * allVariables.size() * allCenters.size();
-    size_t actualMessages = metadata_.totalMessages;
-
-    if (expectedCombinations != actualMessages) {
-        // Some combinations are missing.
+    if (hasConsistentGrid) {
+        std::cout << "Grid consistency validation passed for file: " << filepath << std::endl;
+        return true;
+    } else {
+        std::cout << "Grid consistency validation failed for file: " << filepath << std::endl;
         return false;
     }
+}
 
-    return true;
+bool GribFile::performParallelValidation(const std::string& filepath) const {
+    return false;
 }
