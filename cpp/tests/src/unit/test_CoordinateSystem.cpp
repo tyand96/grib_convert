@@ -202,3 +202,18 @@ TEST_CASE("Comparisons") {
         REQUIRE(coords1 != coords2);
     }
 }
+
+TEST_CASE("Combining", "[CoordinateSystem]") {
+    SECTION("Combine from empty grid") {
+        CoordinateSystem coords1;
+        CoordinateSystem coords2 = CoordinateSystem::createRegularGrid(
+            std::unordered_set<float>{1, 2, 3},
+            std::unordered_set<float>{4, 5, 6}
+        );
+
+        CoordinateSystem combined = coords1.combine(coords2);
+        REQUIRE(combined.getGridType() == CoordinateSystem::GridType::REGULAR_LATLON);
+        REQUIRE(combined.getGrid() != nullptr);
+        REQUIRE(combined.getGrid()->points.size() == 9); // 3 latitudes
+    }
+}

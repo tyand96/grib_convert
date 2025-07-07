@@ -130,8 +130,10 @@ private:
     void processMessageBatch(const std::vector<size_t>& indices, std::function<void(const GribMessage&)> processor);
 
     using DimensionKey = std::tuple<TimeInfo, unsigned int, Variable, Center>;
-    using DimensionMap = std::unordered_map<DimensionKey, CoordinateSystem>;
+    using DimensionMap = std::unordered_map<DimensionKey, std::vector<off_t>>;
+    DimensionMap dimensionMessages_;
     bool validateMessageCompatibility(codes_handle* handle, DimensionMap& coverage) const;
+    size_t computeGridHash(const std::vector<off_t>& messageOffsets) const;
     bool performSequentialValidation(const std::string& filepath) const;
     bool performParallelValidation(const std::string& filepath) const;    
 };

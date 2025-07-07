@@ -38,6 +38,21 @@ bool CoordinateSystem::Grid::overlaps(const Grid& other) const {
     return false;
 }
 
+size_t CoordinateSystem::Grid::hash() const {
+    size_t hashValue = 0;
+    std::vector<Point> sorted_points(points.begin(), points.end());
+    std::sort(sorted_points.begin(), sorted_points.end(),
+        [](const Point& a, const Point& b) {
+            return std::tie(a.latitude, a.longitude) < std::tie(b.latitude, b.longitude);
+        }
+    );
+    for (const auto& point : points) {
+        size_t point_hash = std::hash<Point>{}(point);
+        hashValue ^= point_hash + 0x9e3779b9 + (hashValue << 6) + (hashValue >> 2);
+    }
+    return hashValue;
+}
+
 std::unique_ptr<CoordinateSystem::Grid> CoordinateSystem::Grid::clone() const {
     auto clonedGrid = std::make_unique<Grid>();
     clonedGrid->points = points; // Copy the points.
@@ -138,10 +153,25 @@ bool CoordinateSystem::contains(const CoordinateSystem& other) const {
 }
 
 CoordinateSystem CoordinateSystem::combine(const CoordinateSystem& other) const {
+    if (!grid_) {
+        if (!other.grid_) {
+            return CoordinateSystem(); // Both are empty, return empty CoordinateSystem
+        }
+        return CoordinateSystem(
+            other.grid_->clone(),
+            other.gridType_ // Use the grid type of the other system
+        );
+    }
     auto combinedGrid = grid_->clone();
     if (other.grid_) {
         combinedGrid->points.insert(other.grid_->points.begin(), other.grid_->points.end());
+    } else {
+        return CoordinateSystem(
+            std::move(combinedGrid),
+            gridType_ // Use the current grid type if other is empty
+        );
     }
+
     GridType combinedGridType = (gridType_ == other.gridType_) ? gridType_ : GridType::COMPOSITE;
     return CoordinateSystem(
         std::move(combinedGrid),

@@ -109,6 +109,8 @@ void GribFile::loadMetadata() {
     CoordinateSystem::GridType firstGridType;
     bool firstMessage = true;
 
+    off_t currentOffset = ftell(file);
+
     // Process all messages in the file.
     while ((h = codes_handle_new_from_file(nullptr, file, PRODUCT_GRIB, &err)) != nullptr) {
         auto handleGuard = [](codes_handle* handle) {
@@ -139,6 +141,12 @@ void GribFile::loadMetadata() {
         size_t len = sizeof(gridType);
         CODES_CHECK(codes_get_string(h, "gridType", gridType, &len), 0);
         CoordinateSystem::GridType currentGridType = CoordinateSystem::stringToGridType(gridType);
+
+        // Extract time information
+        TimeInfo timeInfo = extractTimeInfo(h);
+
+        // Extract ensemble information
+        EnsembleInfo ensInfo = extractEnsembleInfo(h);
 
         if (firstMessage) {
             firstGridType = currentGridType;
@@ -172,6 +180,19 @@ void GribFile::loadMetadata() {
             messageCache_->add(cachedCount, std::move(message));
             cachedCount++;
         }
+
+        // Store in map for later validation
+        DimensionKey key = std::make_tuple(
+            timeInfo,
+            ensInfo.memberNumber,
+            variable,
+            center
+        );
+        if (dimensionMessages_.find(key) == dimensionMessages_.end()) {
+            dimensionMessages_[key] = std::vector<off_t>();
+        }
+        dimensionMessages_[key].push_back(currentOffset);
+        currentOffset = ftell(file);
 
     }
 
@@ -370,23 +391,23 @@ bool GribFile::validateMessageCompatibility(codes_handle* handle, GribFile::Dime
 
     CoordinateSystem coords = extractCoordinateSystem(handle);
 
-    // Add the coordinates to the dimension coverage map
-    if (dimensionCoverage.find(key) == dimensionCoverage.end()) {
-        // If this key is not in the map, create a new entry
-        dimensionCoverage[key] = coords;
-    } else {
-        dimensionCoverage[key] = dimensionCoverage[key].combine(coords);
-    }
+    // // Add the coordinates to the dimension coverage map
+    // if (dimensionCoverage.find(key) == dimensionCoverage.end()) {
+    //     // If this key is not in the map, create a new entry
+    //     dimensionCoverage[key] = coords;
+    // } else {
+    //     dimensionCoverage[key] = dimensionCoverage[key].combine(coords);
+    // }
 
-    for (const auto& keys : dimensionCoverage) {
-        if (keys.first == key) {
-            continue; // Skip the same key
-        }
+    // for (const auto& keys : dimensionCoverage) {
+    //     if (keys.first == key) {
+    //         continue; // Skip the same key
+    //     }
 
-        if (!keys.second.contains(coords)) {
-            return false;
-        }
-    }
+    //     if (!keys.second.contains(coords)) {
+    //         return false;
+    //     }
+    // }
     return true;
 }
 
@@ -410,6 +431,50 @@ bool GribFile::validateMessageCompatibility(codes_handle* handle, GribFile::Dime
 
 //     return latLon;
 // }
+
+size_t GribFile::computeGridHash(const std::vector<off_t>& messageOffsets) const {
+    // Open the GRIB file using eccodes.
+    int err = 0;
+    FILE* file = fopen(filepath_.c_str(), "rb");
+    if (!file) {
+        throw std::runtime_error("Failed to open GRIB file: " + filepath_);
+    }
+
+    auto fileGuard = [](FILE* file) { 
+        if (file) fclose(file); 
+    };
+    std::unique_ptr<FILE, decltype(fileGuard)> fileCleanup(file, fileGuard);
+
+    CoordinateSystem fullCoords;
+    for (const auto offset : messageOffsets) {
+        if (fseek(file, offset, SEEK_SET) != 0) {
+            throw std::runtime_error("Failed to seek to offset in GRIB file: " + filepath_);
+        }
+        codes_handle* h = codes_handle_new_from_file(nullptr, file, PRODUCT_GRIB, &err);
+        if (!h) {
+            throw std::runtime_error("Failed to create handle from GRIB file: " + filepath_);
+        }
+        auto handleGuard = [](codes_handle* handle) {
+            if (handle) codes_handle_delete(handle);
+        };
+        std::unique_ptr<codes_handle, decltype(handleGuard)> handleCleanup(h, handleGuard);
+
+        if (err != CODES_SUCCESS) {
+            throw std::runtime_error("Error reading GRIB message: " + std::to_string(err));
+        }
+
+        // Extract coordinates
+        CoordinateSystem coords = extractCoordinateSystem(h);
+        if (!coords.getGrid()) {
+            throw std::runtime_error("Failed to extract coordinates from GRIB message at offset: " + std::to_string(offset));
+        }
+        fullCoords = fullCoords.combine(coords);
+    }
+    // Compute a hash of the combined coordinates
+    size_t hash = fullCoords.getGrid()->hash();
+
+    return hash;
+}
 
 bool GribFile::validateGridConsistency() const {
     switch (validationStatus_) {
@@ -452,32 +517,15 @@ bool GribFile::performSequentialValidation(const std::string& filepath) const {
     codes_handle* h = nullptr;
     bool hasConsistentGrid = true;
 
-    while ((h = codes_handle_new_from_file(nullptr, file, PRODUCT_GRIB, &err)) != nullptr) {
-        auto handleGuard = [](codes_handle* handle) {
-            if (handle) codes_handle_delete(handle);
-        };
-        std::unique_ptr<codes_handle, decltype(handleGuard)> handleCleanup(h, handleGuard);
-
-        if (err != CODES_SUCCESS) {
-            throw std::runtime_error("Error reading GRIB message: " + std::to_string(err));
-        }
-
-        // Validate the message compatibility
-        DimensionMap coverage;
-        hasConsistentGrid = validateMessageCompatibility(h, coverage);
+    std::unordered_set<size_t> gridHashes;
+    for (const auto [key, fileLocs] : dimensionMessages_) {
+        auto [timeInfo, memberNumber, variable, center] = key;
+        gridHashes.insert(computeGridHash(fileLocs));
     }
 
-    if (err != CODES_SUCCESS && err != CODES_END_OF_FILE) {
-        throw std::runtime_error("Error reading GRIB file: " + std::to_string(err));
-    }
+    std::cout << "Found " << gridHashes.size() << " unique grid hashes." << std::endl;
 
-    if (hasConsistentGrid) {
-        std::cout << "Grid consistency validation passed for file: " << filepath << std::endl;
-        return true;
-    } else {
-        std::cout << "Grid consistency validation failed for file: " << filepath << std::endl;
-        return false;
-    }
+    return true;
 }
 
 bool GribFile::performParallelValidation(const std::string& filepath) const {

@@ -44,6 +44,7 @@ public:
         bool isPointValid(const Point& point) const;
         bool contains(const Grid& other) const;
         bool overlaps(const Grid& other) const;
+        size_t hash() const;
 
         std::unique_ptr<Grid> clone() const;
 
