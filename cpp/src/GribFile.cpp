@@ -53,9 +53,9 @@ bool GribFile::MessageCache::contains(size_t index) const {
     return cache.find(index) != cache.end();
 }
 
-GribFile::GribFile(std::string filepath) {
+GribFile::GribFile(std::string filepath, bool validate) {
     filepath_ = filepath;
-    loadMetadata();
+    loadMetadata(validate);
 }
 
 GribFile::GribFile(const GribFile& other)
@@ -70,6 +70,27 @@ GribFile::GribFile(GribFile&& other) noexcept
         metadata_(std::move(other.metadata_)),
         messageCache_(std::move(other.messageCache_)) {}
 
+GribFile GribFile::operator=(const GribFile& other) {
+    if (this != &other) {
+        filepath_ = other.filepath_;
+        metadata_ = other.metadata_;
+        messageCache_ = std::make_unique<MessageCache>();
+        if (other.messageCache_) {
+            *messageCache_ = *other.messageCache_;
+        }
+    }
+    return *this;
+}
+
+GribFile GribFile::operator=(GribFile&& other) {
+    if (this != &other) {
+        filepath_ = std::move(other.filepath_);
+        metadata_ = std::move(other.metadata_);
+        messageCache_ = std::move(other.messageCache_);
+    }
+    return *this;
+}
+
 bool GribFile::operator==(const GribFile& other) const {
     return filepath_ == other.filepath_ &&
         metadata_ == other.metadata_;
@@ -80,7 +101,7 @@ bool GribFile::operator!=(const GribFile& other) const {
 }
 
 
-void GribFile::loadMetadata() {
+void GribFile::loadMetadata(bool validate) {
     // Reset metadata
     metadata_ = Metadata();
     metadata_.hasConsistentGrid = true;
@@ -211,19 +232,9 @@ void GribFile::loadMetadata() {
     }
 
     metadata_.totalMessages = messageCount;
-
-    for (const auto c: metadata_.centers) {
-        std::cout << center_as_string(c) << std::endl;
+    if (validate) {
+        metadata_.hasConsistentGrid = validateGridConsistency();
     }
-
-    std::cout << std::endl;
-
-    for (const auto v: metadata_.variables) {
-        std::cout << variable_as_string(v) << std::endl;
-    }
-
-    std::cout << getEstimatedMemorySize() << " bytes estimated memory size." << std::endl;
-    std::cout << getMessageCount() << " messages found in file." << std::endl;
 }
 
 CoordinateSystem GribFile::extractCoordinateSystem(codes_handle* h) const {
@@ -370,70 +381,6 @@ EnsembleInfo GribFile::extractEnsembleInfo(codes_handle* h) const {
     return ensInfo;
 }
 
-bool GribFile::validateMessageCompatibility(codes_handle* handle, GribFile::DimensionMap& dimensionCoverage) const {
-    if (!handle) {
-        return false;
-    }
-
-    bool coordsEverywhere = true;
-
-    // Extract dimensions from the current message
-    TimeInfo timeInfo = extractTimeInfo(handle);
-    EnsembleInfo ensInfo = extractEnsembleInfo(handle);
-
-    long varCode = 0;
-    CODES_CHECK(codes_get_long(handle, "indicatorOfParameter", &varCode), 0);
-    Variable variable = variable_from_code(varCode);
-
-    long centerCode = 0;
-    CODES_CHECK(codes_get_long(handle, "centre", &centerCode), 0);
-    Center center = center_from_code(centerCode);
-
-    DimensionKey key = std::make_tuple(timeInfo, ensInfo.memberNumber, variable, center);
-
-    CoordinateSystem coords = extractCoordinateSystem(handle);
-
-    // // Add the coordinates to the dimension coverage map
-    // if (dimensionCoverage.find(key) == dimensionCoverage.end()) {
-    //     // If this key is not in the map, create a new entry
-    //     dimensionCoverage[key] = coords;
-    // } else {
-    //     dimensionCoverage[key] = dimensionCoverage[key].combine(coords);
-    // }
-
-    // for (const auto& keys : dimensionCoverage) {
-    //     if (keys.first == key) {
-    //         continue; // Skip the same key
-    //     }
-
-    //     if (!keys.second.contains(coords)) {
-    //         return false;
-    //     }
-    // }
-    return true;
-}
-
-// CoordinateSystem::LatLon GribFile::distillLatLon() const {
-//     CoordinateSystem::LatLon latLon;
-
-//     // Collect all unique latitudes and longitudes from the dimension coverage
-//     std::unordered_set<float> uniqueLats;
-//     std::unordered_set<float> uniqueLons;
-
-//     for (const auto& entry : dimensionCoverage_) {
-//         for (const auto& coord : entry.second) {
-//             uniqueLats.insert(coord.first);
-//             uniqueLons.insert(coord.second);
-//         }
-//     }
-
-//     // Convert to vectors
-//     latLon.latitudes.assign(uniqueLats.begin(), uniqueLats.end());
-//     latLon.longitudes.assign(uniqueLons.begin(), uniqueLons.end());
-
-//     return latLon;
-// }
-
 size_t GribFile::computeGridHash(FILE* file, const std::vector<off_t>& messageOffsets) const {
     int err = 0;
 
@@ -491,6 +438,10 @@ bool GribFile::validateGridConsistency() const {
             return validationStatus_ == ValidationStatus::PASSED;
         }     
     }
+}
+
+bool GribFile::isValid() const {
+    return validationStatus_ == ValidationStatus::PASSED;
 }
 
 bool GribFile::performSequentialValidation(const std::string& filepath) const {

@@ -76,7 +76,7 @@ public:
         mutable std::shared_ptr<GribMessage> currentMessage_;
     };
 
-    explicit GribFile(std::string filepath);
+    explicit GribFile(std::string filepath, bool validate = true);
     GribFile(const GribFile& other);
     GribFile(GribFile&& other) noexcept;
     GribFile operator=(const GribFile& other);
@@ -119,7 +119,7 @@ private:
     };
     std::unique_ptr<MessageCache> messageCache_;
 
-    void loadMetadata();
+    void loadMetadata(bool validate);
     CoordinateSystem extractCoordinateSystem(codes_handle* h) const;
     CoordinateSystem extractRegularGrid(codes_handle* h) const;
     TimeInfo extractTimeInfo(codes_handle* h) const;
@@ -132,7 +132,6 @@ private:
     using DimensionKey = std::tuple<TimeInfo, unsigned int, Variable, Center>;
     using DimensionMap = std::unordered_map<DimensionKey, std::vector<off_t>>;
     DimensionMap dimensionMessages_;
-    bool validateMessageCompatibility(codes_handle* handle, DimensionMap& coverage) const;
     size_t computeGridHash(FILE* file, const std::vector<off_t>& messageOffsets) const;
     bool performSequentialValidation(const std::string& filepath) const;
     bool performParallelValidation(const std::string& filepath) const;    

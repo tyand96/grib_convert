@@ -10,30 +10,48 @@ TEST_CASE("Constructors", "[GribFile]") {
         // std::string filePath = "/Users/tyler/Documents/grib_convert/cpp/tests/test_files/10m_wind_speed.ecmwf.2021.01.grib";
         GribFile gf(filePath);
 
-        gf.validateGridConsistency();
-
         REQUIRE(gf.getFilePath() == filePath);
+        REQUIRE(gf.isValid());
+
+        GribFile::Metadata metadata = gf.getMetadata();
+        REQUIRE(metadata.centers == std::set<Center>({Center::ECMWF}));
+        REQUIRE(metadata.variables == std::set<Variable>({Variable::M10}));
+        REQUIRE(metadata.hasConsistentGrid);
     }
 
-    // SECTION("Copy Constructor") {
-    //     std::string filePath = "../test_files/10m_wind_speed.ecmwf.2021.01.grib";
-    //     GribFile gf(filePath);
+    SECTION("No validation") {
+        std::string filePath = "../test_files/10m_wind_speed.ecmwf.2021.01.grib";
+        // std::string filePath = "/Users/tyler/Documents/grib_convert/cpp/tests/test_files/10m_wind_speed.ecmwf.2021.01.grib";
+        GribFile gf(filePath, false);
 
-    //     GribFile copy(gf);
+        REQUIRE(gf.getFilePath() == filePath);
+        REQUIRE_FALSE(gf.isValid());
 
-    //     REQUIRE(copy.getFilePath() == gf.getFilePath());
+        GribFile::Metadata metadata = gf.getMetadata();
+        REQUIRE(metadata.centers == std::set<Center>({Center::ECMWF}));
+        REQUIRE(metadata.variables == std::set<Variable>({Variable::M10}));
+        REQUIRE(metadata.hasConsistentGrid);
+    }
 
-    //     auto copy2 = copy;
+    SECTION("Copy Constructor") {
+        std::string filePath = "../test_files/10m_wind_speed.ecmwf.2021.01.grib";
+        GribFile gf(filePath);
 
-    //     REQUIRE(copy2 == gf);
-    // }
+        GribFile copy(gf);
 
-    // SECTION("Move Constructor") {
-    //     std::string filePath = "../test_files/10m_wind_speed.ecmwf.2021.01.grib";
-    //     GribFile gf(filePath);
+        REQUIRE(copy.getFilePath() == gf.getFilePath());
 
-    //     GribFile moved = std::move(gf);
+        auto copy2 = copy;
 
-    //     REQUIRE(moved.getFilePath() == filePath);
-    // }
+        REQUIRE(copy2 == gf);
+    }
+
+    SECTION("Move Constructor") {
+        std::string filePath = "../test_files/10m_wind_speed.ecmwf.2021.01.grib";
+        GribFile gf(filePath);
+
+        GribFile moved = std::move(gf);
+
+        REQUIRE(moved.getFilePath() == filePath);
+    }
 }
