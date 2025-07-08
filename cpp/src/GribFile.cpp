@@ -1,8 +1,10 @@
 #include <GribFile.hpp>
 #include <GribMessage.hpp>
+#include <ThreadPool.hpp>
 #include <stdexcept>
 #include <unordered_set>
 #include <iostream>
+#include <thread>
 
 bool GribFile::Metadata::operator==(const Metadata& other) const {
     return centers == other.centers &&
@@ -432,18 +434,8 @@ bool GribFile::validateMessageCompatibility(codes_handle* handle, GribFile::Dime
 //     return latLon;
 // }
 
-size_t GribFile::computeGridHash(const std::vector<off_t>& messageOffsets) const {
-    // Open the GRIB file using eccodes.
+size_t GribFile::computeGridHash(FILE* file, const std::vector<off_t>& messageOffsets) const {
     int err = 0;
-    FILE* file = fopen(filepath_.c_str(), "rb");
-    if (!file) {
-        throw std::runtime_error("Failed to open GRIB file: " + filepath_);
-    }
-
-    auto fileGuard = [](FILE* file) { 
-        if (file) fclose(file); 
-    };
-    std::unique_ptr<FILE, decltype(fileGuard)> fileCleanup(file, fileGuard);
 
     CoordinateSystem fullCoords;
     for (const auto offset : messageOffsets) {
@@ -481,7 +473,7 @@ bool GribFile::validateGridConsistency() const {
         case ValidationStatus::NOT_VALIDATED: {
             size_t messageCount = getMessageCount();
 
-            if (messageCount <= 1000) {
+            if (messageCount <= 10) {
                 // Perform sequential validation
                 bool result = performSequentialValidation(filepath_);
                 validationStatus_ = result ? ValidationStatus::PASSED : ValidationStatus::FAILED;
@@ -503,7 +495,6 @@ bool GribFile::validateGridConsistency() const {
 
 bool GribFile::performSequentialValidation(const std::string& filepath) const {
     // Open the GRIB file using eccodes.
-    int err = 0;
     FILE* file = fopen(filepath_.c_str(), "rb");
     if (!file) {
         throw std::runtime_error("Failed to open GRIB file: " + filepath_);
@@ -514,20 +505,89 @@ bool GribFile::performSequentialValidation(const std::string& filepath) const {
     };
     std::unique_ptr<FILE, decltype(fileGuard)> fileCleanup(file, fileGuard);
 
-    codes_handle* h = nullptr;
-    bool hasConsistentGrid = true;
-
     std::unordered_set<size_t> gridHashes;
     for (const auto [key, fileLocs] : dimensionMessages_) {
         auto [timeInfo, memberNumber, variable, center] = key;
-        gridHashes.insert(computeGridHash(fileLocs));
+        gridHashes.insert(computeGridHash(file, fileLocs));
     }
 
-    std::cout << "Found " << gridHashes.size() << " unique grid hashes." << std::endl;
-
-    return true;
+    return gridHashes.size() == 1; // All hashes should be the same for a consistent grid
 }
 
 bool GribFile::performParallelValidation(const std::string& filepath) const {
-    return false;
+    std::unordered_set<size_t> gridHashes;
+    std::mutex hashMutex;
+    std::mutex exceptionMutex;
+    std::vector<std::exception_ptr> exceptions;
+    std::vector<std::future<size_t>> futures;
+
+    const unsigned int numThreads = std::min(
+        std::thread::hardware_concurrency(),
+        static_cast<unsigned int>(8)
+    );
+    if (numThreads == 0) {
+        throw std::runtime_error("Failed to determine number of hardware threads.");
+    }
+    
+    // Parallelize using threads
+    ThreadPool threadPool(numThreads);
+    std::atomic<bool> hadError{false};
+    for (const auto& mapItem : dimensionMessages_) {
+        futures.push_back(threadPool.enqueue([this, &filepath, &mapItem, &hadError]() -> size_t {
+            try {
+                const auto& fileLocs = mapItem.second;
+                if (fileLocs.empty()) {
+                    return 0;
+                }
+
+                FILE* file = fopen(filepath.c_str(), "rb");
+                if (!file) {
+                    hadError = true;
+                    throw std::runtime_error("Failed to open GRIB file: " + filepath);
+                }
+
+                auto fileGuard = [](FILE* file) {
+                    if (file) fclose(file);
+                };
+                std::unique_ptr<FILE, decltype(fileGuard)> fileCleanup(file, fileGuard);
+
+                return computeGridHash(file, fileLocs);
+            } catch (const std::exception& e) {
+                hadError = true;
+                std::cerr << "Exception in thread: " << e.what() << std::endl;
+                throw;
+            }
+        }));
+
+        if (hadError) {
+            std::cerr << "Error detected, stopping all threads..." << std::endl;
+            threadPool.forceStop();
+            return false;
+        }
+    }
+
+    try {
+        threadPool.waitForCompletion();
+    } catch (const std::exception& e) {
+        std::cerr << "Error waiting for thread completion: " << e.what() << std::endl;
+        threadPool.forceStop();
+        return false;
+    }
+
+    for (auto& future : futures) {
+        if (future.valid()) {
+            try {
+                size_t hash = future.get();
+                if (hash != 0) {
+                    std::lock_guard<std::mutex> lock(hashMutex);
+                    gridHashes.insert(hash);
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "Task failed: " << e.what() << std::endl;
+                return false;
+            }
+        }
+    }
+
+    return gridHashes.size() == 1; // All hashes should be the same for a consistent grid
 }

@@ -133,7 +133,7 @@ private:
     using DimensionMap = std::unordered_map<DimensionKey, std::vector<off_t>>;
     DimensionMap dimensionMessages_;
     bool validateMessageCompatibility(codes_handle* handle, DimensionMap& coverage) const;
-    size_t computeGridHash(const std::vector<off_t>& messageOffsets) const;
+    size_t computeGridHash(FILE* file, const std::vector<off_t>& messageOffsets) const;
     bool performSequentialValidation(const std::string& filepath) const;
     bool performParallelValidation(const std::string& filepath) const;    
 };
