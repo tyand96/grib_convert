@@ -1,10 +1,14 @@
 #include <GribFile.hpp>
 #include <GribMessage.hpp>
 #include <ThreadPool.hpp>
+#include <CoordinateSystem.hpp>
 #include <stdexcept>
+#include <unistd.h>
+#include <fcntl.h>
 #include <unordered_set>
 #include <iostream>
 #include <thread>
+#include <netcdf>
 
 bool GribFile::Metadata::operator==(const Metadata& other) const {
     return centers == other.centers &&
@@ -100,6 +104,124 @@ bool GribFile::operator!=(const GribFile& other) const {
     return !(*this == other);
 }
 
+GribFile::FileGuard::FileGuard(const std::string& filepath) {
+    file_ = fopen(filepath.c_str(), "rb");
+    if (!file_) {
+        throw std::runtime_error("Failed to open file: " + filepath);
+    }
+}
+
+GribFile::FileGuard::~FileGuard() {
+    if (file_) {
+        fclose(file_);
+        file_ = nullptr;
+    }
+}
+
+GribFile::FileGuard::FileGuard(FileGuard&& other) noexcept
+    : file_(other.file_) {
+        other.file_ = nullptr;
+    }
+
+GribFile::FileGuard& GribFile::FileGuard::operator=(FileGuard&& other) noexcept {
+    if (this != &other) {
+        if (file_) {
+            fclose(file_);
+        }
+        file_ = other.file_;
+        other.file_ = nullptr;
+    }
+    return *this;
+}
+
+GribFile::FileGuard GribFile::openFile() const {
+    return FileGuard(filepath_);
+}
+
+GribFile::CodesHandleGuard::CodesHandleGuard(FILE* file) {
+    int err = 0;
+    handle_ = codes_handle_new_from_file(nullptr, file, PRODUCT_GRIB, &err);
+    if (!handle_) {
+        throw std::runtime_error("Failed to create GRIB handle.");
+    }
+
+    if (err != CODES_SUCCESS) {
+        throw std::runtime_error("Error reading GRIB message: " + std::to_string(err));
+    }
+}
+
+GribFile::CodesHandleGuard::CodesHandleGuard(const FileGuard& fileGuard) {
+    *this = CodesHandleGuard(fileGuard.get());
+}
+
+GribFile::CodesHandleGuard::~CodesHandleGuard() {
+    if (handle_) {
+        codes_handle_delete(handle_);
+        handle_ = nullptr;
+    }
+}
+
+GribFile::CodesHandleGuard::CodesHandleGuard(CodesHandleGuard&& other) noexcept
+    : handle_(other.handle_) {
+        other.handle_ = nullptr;
+    }
+
+GribFile::CodesHandleGuard& GribFile::CodesHandleGuard::operator=(CodesHandleGuard&& other) noexcept {
+    if (this != &other) {
+        if (handle_) {
+            codes_handle_delete(handle_);
+        }
+        handle_ = other.handle_;
+        other.handle_ = nullptr;
+    }
+    return *this;
+}
+
+GribFile::CodesHandleGuard GribFile::getHandle(const FileGuard& fileGuard) const {
+    return CodesHandleGuard(fileGuard);
+}
+
+GribFile::Iterator& GribFile::Iterator::operator++() {
+    currentIndex_++;
+    currentMessage_.reset();
+    return *this;
+}
+
+GribFile::Iterator GribFile::Iterator::operator++(int) {
+    Iterator tmp = *this;
+    ++(*this);
+    return tmp;
+}
+
+const GribMessage& GribFile::Iterator::operator*() const {
+    if (!currentMessage_) {
+        currentMessage_ = parent_->loadMessage(currentIndex_);
+    }
+    return *currentMessage_;
+}
+
+const GribMessage* GribFile::Iterator::operator->() const {
+    if (!currentMessage_) {
+        currentMessage_ = parent_->loadMessage(currentIndex_);
+    }
+    return currentMessage_.get();
+}
+
+bool GribFile::Iterator::operator!=(const Iterator& other) const {
+    return currentIndex_ != other.currentIndex_ || parent_ != other.parent_;
+}
+
+bool GribFile::Iterator::operator==(const Iterator& other) const {
+    return !(*this != other);
+}
+
+GribFile::Iterator GribFile::begin() {
+    return Iterator(this, 0);
+}
+
+GribFile::Iterator GribFile::end() {
+    return Iterator(this, metadata_.totalMessages);
+}
 
 void GribFile::loadMetadata(bool validate) {
     // Reset metadata
@@ -114,19 +236,12 @@ void GribFile::loadMetadata(bool validate) {
         messageCache_->lruList.clear();
     }
 
-    // OPen the GRIB file using eccodes.
+    FileGuard fileGuard = openFile();
+    CodesHandleGuard handleGuard = getHandle(fileGuard);
+    FILE* file = fileGuard.get();
+    codes_handle* h = handleGuard.get();
+
     int err = 0;
-    FILE* file = fopen(filepath_.c_str(), "rb");
-    if (!file) {
-        throw std::runtime_error("Failed to open GRIB file: " + filepath_);
-    }
-
-    auto fileGuard = [](FILE* file) { 
-        if (file) fclose(file); 
-    };
-    std::unique_ptr<FILE, decltype(fileGuard)> fileCleanup(file, fileGuard);
-
-    codes_handle* h = nullptr;
     size_t messageCount = 0;
     size_t cachedCount = 0;
     CoordinateSystem::GridType firstGridType;
@@ -167,9 +282,11 @@ void GribFile::loadMetadata(bool validate) {
 
         // Extract time information
         TimeInfo timeInfo = extractTimeInfo(h);
+        metadata_.times.insert(timeInfo);
 
         // Extract ensemble information
         EnsembleInfo ensInfo = extractEnsembleInfo(h);
+        metadata_.ensembles.insert(ensInfo);
 
         if (firstMessage) {
             firstGridType = currentGridType;
@@ -215,6 +332,7 @@ void GribFile::loadMetadata(bool validate) {
             dimensionMessages_[key] = std::vector<off_t>();
         }
         dimensionMessages_[key].push_back(currentOffset);
+        messageOffsets_.push_back(currentOffset);
         currentOffset = ftell(file);
 
     }
@@ -235,6 +353,10 @@ void GribFile::loadMetadata(bool validate) {
     if (validate) {
         metadata_.hasConsistentGrid = validateGridConsistency();
     }
+
+    // Set the coordinates.
+    auto firstCachedMessage = messageCache_->get(0);
+    metadata_.coordinates = firstCachedMessage->getCoordinateSystem();
 }
 
 CoordinateSystem GribFile::extractCoordinateSystem(codes_handle* h) const {
@@ -381,7 +503,92 @@ EnsembleInfo GribFile::extractEnsembleInfo(codes_handle* h) const {
     return ensInfo;
 }
 
-size_t GribFile::computeGridHash(FILE* file, const std::vector<off_t>& messageOffsets) const {
+Variable GribFile::extractVariable(codes_handle* h) const {
+    long varCode = 0;
+    CODES_CHECK(codes_get_long(h, "indicatorOfParameter", &varCode), 0);
+    Variable variable = variable_from_code(varCode);
+    return variable;
+}
+
+Center GribFile::extractCenter(codes_handle* h) const {
+    long centerCode = 0;
+    CODES_CHECK(codes_get_long(h, "centre", &centerCode), 0);
+    Center center = center_from_code(centerCode);
+    return center;
+}
+
+void GribFile::extractData(codes_handle* h, size_t numValues, std::vector<double>& data) const {
+    if (!h) {
+        throw std::runtime_error("Invalid GRIB handle");
+    }
+
+    data.resize(numValues);
+
+    // Extract the values 
+    int err = codes_get_double_array(h, "values", data.data(), &numValues);
+    if (err != CODES_SUCCESS) {
+        throw std::runtime_error("Failed to get data from GRIB file.");
+    }
+
+    // Check for and handle missing values
+    double missingValue = 0.0;
+    if (codes_is_defined(h, "missingValue") == 1) {
+        err = codes_get_double(h, "missingValue", &missingValue);
+        if (err == CODES_SUCCESS) {
+            // Replace missing values with NaN
+            for (size_t i = 0; i < numValues; i++) {
+                if (data[i] == missingValue) {
+                    data[i] = std::numeric_limits<double>::quiet_NaN();
+                }
+            }
+        }
+    }
+}
+
+std::shared_ptr<GribMessage> GribFile::loadMessage(size_t index) const noexcept {
+    if (index >= messageOffsets_.size()) {
+        std::cerr << "Message index is out of bounds." << std::endl;
+        return nullptr;
+    }
+
+    FileGuard fileGuard(filepath_);
+    FILE* file = fileGuard.get();
+
+    off_t messageOff = messageOffsets_[index];
+
+    try {
+        if (fseek(file, messageOff, SEEK_SET) != 0) {
+            std::cerr << "Failed to seek to message offset: " << messageOff << std::endl;
+            return nullptr;
+        }
+        int err = 0;
+        CodesHandleGuard handleGuard(fileGuard);
+        codes_handle* h = handleGuard.get();
+
+        // Extract time and ensemble information.
+        TimeInfo timeInfo = extractTimeInfo(h);
+        EnsembleInfo ensInfo = extractEnsembleInfo(h);
+        CoordinateSystem coords = extractCoordinateSystem(h);
+        Variable variable = extractVariable(h);
+        Center center = extractCenter(h);
+
+        std::vector<double> data;
+        extractData(h, metadata_.coordinates.numPoints(), data);
+        std::vector<float> dataFloat(data.begin(), data.end());
+
+        return std::make_shared<GribMessage>(
+            timeInfo, ensInfo,
+            dataFloat, coords,
+            variable, center
+        );
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error creating handle from GRIB file: " << e.what() << std::endl;
+        return nullptr;
+    }
+}
+
+CoordinateSystem GribFile::buildMergedSystem(FILE* file, const std::vector<off_t>& messageOffsets) const {
     int err = 0;
 
     CoordinateSystem fullCoords;
@@ -409,10 +616,139 @@ size_t GribFile::computeGridHash(FILE* file, const std::vector<off_t>& messageOf
         }
         fullCoords = fullCoords.combine(coords);
     }
-    // Compute a hash of the combined coordinates
-    size_t hash = fullCoords.getGrid()->hash();
+    
+    return fullCoords;
+}
 
-    return hash;
+void GribFile::toNetCDF(const std::string& outputPath, size_t batchSize, size_t numThreads) const {
+    std::cout << "Converting" << std::endl;
+
+    if (numThreads == 0) {
+        numThreads = std::thread::hardware_concurrency();
+    }
+
+    ThreadPool pool(numThreads);
+
+    // Create NetCDF with proper dimensions
+    netCDF::NcFile ncFile(outputPath, netCDF::NcFile::replace);
+
+    // Create dimensions based on metadata
+    const CoordinateSystem& coords = metadata_.coordinates;
+    if (!coords.getGrid()) {
+        throw std::runtime_error("Error: Coordinate grid is null.");
+    }
+    auto [longitudes, latitudes] = coords.getGrid()->getSplitPoints();
+    auto latDim = ncFile.addDim("latitude", latitudes.size());
+    auto lonDim = ncFile.addDim("longitude", longitudes.size());
+    auto timeDim = ncFile.addDim("pred_time", metadata_.times.size());
+    auto memberDim = ncFile.addDim("ensemble", metadata_.ensembles.size());
+    auto centerDim = ncFile.addDim("center", metadata_.centers.size());
+
+    // Add coordinate variables
+    auto latVar = ncFile.addVar("latitude", netCDF::NcType::nc_FLOAT, {latDim});
+    auto lonVar = ncFile.addVar("longitude", netCDF::NcType::nc_FLOAT, {lonDim});
+    auto timeVar = ncFile.addVar("pred_time", netCDF::NcType::nc_FLOAT, {timeDim});
+    auto memberVar = ncFile.addVar("ensemble", netCDF::NcType::nc_UINT, {memberDim});
+    auto centerVar = ncFile.addVar("center", netCDF::NcType::nc_STRING, {centerDim});
+
+    // Write coordinate values.
+    latVar.putVar(latitudes.data());
+    lonVar.putVar(longitudes.data());
+
+    std::unordered_map<float, size_t> timeIndexMap;
+    std::vector<float> timeValues;
+    timeValues.reserve(metadata_.times.size());
+    timeValues.reserve(metadata_.times.size());
+    for (const auto& time : metadata_.times) {
+        timeValues.push_back(time.toFloat());
+    }
+    std::sort(timeValues.begin(), timeValues.end());
+    size_t timeIndex = 0;
+    for (const auto& time : timeValues) {
+        timeIndexMap[time] = timeIndex++;
+    }
+    timeVar.putVar(timeValues.data());
+    timeVar.putAtt("units", "hours since 1970-01-01 00:00:00 UTC");
+
+    std::vector<EnsembleInfo> sortedEnsembles(metadata_.ensembles.begin(), metadata_.ensembles.end());
+    std::sort(sortedEnsembles.begin(), sortedEnsembles.end(),
+        [](const EnsembleInfo& ens1, const EnsembleInfo& ens2){
+            return ens1.initTime < ens2.initTime;}
+    );
+    std::vector<unsigned int> memberValues(sortedEnsembles.size());
+    std::unordered_map<unsigned int, size_t> memberIndexMap;
+    size_t memberIndex = 0;
+    for (const auto& ens : sortedEnsembles) {
+        unsigned int memberNumber = memberIndex + 1; // 1-based index
+        memberIndexMap[memberNumber] = memberIndex;
+        memberValues[memberIndex++] = memberNumber;
+    }
+    std::sort(memberValues.begin(), memberValues.end());
+    memberVar.putVar(memberValues.data());
+
+    std::vector<std::string> sortedCenters;
+    std::unordered_map<std::string, size_t> centerIndexMap;
+    sortedCenters.reserve(metadata_.centers.size());
+    for (const auto& center : metadata_.centers) {
+        sortedCenters.push_back(center_as_string(center));
+    }
+    std::sort(sortedCenters.begin(), sortedCenters.end());
+    size_t centerIndex = 0;
+    for (const auto& center : sortedCenters) {
+        centerIndexMap[center] = centerIndex++;
+    }
+    centerVar.putVar(sortedCenters.data()); 
+
+    // Create a variable for the initialization time of the ensemble members.
+    auto initTimeVar = ncFile.addVar("init_time", netCDF::NcType::nc_FLOAT, {memberDim});
+    std::vector<float> initTimes;
+    initTimes.reserve(sortedEnsembles.size());
+    for (const auto& ens : sortedEnsembles) {
+        initTimes.push_back(ens.initTime.toFloat());
+    }
+    std::cout << "Writing initialization times: " << initTimes.size() << std::endl;
+    initTimeVar.putVar(initTimes.data());
+    initTimeVar.putAtt("units", "hours since 1970-01-01 00:00:00 UTC");
+
+    // Now to write the data variables.
+    std::unordered_map<Variable, netCDF::NcVar> dataVars;
+    for (const auto& var : metadata_.variables) {
+        std::vector<netCDF::NcDim> dims = {timeDim, memberDim, latDim, lonDim};
+        auto ncVar = ncFile.addVar(variable_as_string(var), netCDF::NcType::nc_FLOAT, dims);
+        ncVar.putAtt("units", units(var));
+        dataVars[var] = ncVar;
+    }
+
+    // Use a mutex to protect access to the NetCDF file.
+    std::mutex ncMutex;
+
+    // // Process variables in batches.
+    // for (const Variable& var : metadata_.variables) {
+    //     std::vector<DimensionKey> keys;
+    //     for (const auto& [key, fileLocs] : dimensionMessages_) {
+    //         if (std::get<2>(key) == var) {
+    //             keys.push_back(key);
+    //         }
+    //     }
+
+    //     if (keys.empty()) {
+    //         throw std::runtime_error("No messages found for variable: " + variable_as_string(var));
+    //     }
+
+    //     // Process each batch of messages for this variable.
+    //     for (size_t i = 0; i < keys.size(); i+= batchSize) {
+    //         size_t end = std::min(i + batchSize, keys.size());
+    //         std::vector<DimensionKey> batch(keys.begin() + i, keys.begin() + end);
+
+    //         // Submit to thread pool.
+    //         pool.enqueue([this, &dataVars, &ncMutex, &timeIndexMap, &memberIndexMap, &centerIndexMap, var, batch]() {
+    //             for (size_t idx : batch) {
+    //                 std::shared_ptr<GribMessage> message = this->loadMessage(idx);
+    //             }
+    //         });
+    //     }
+    // }
+
 }
 
 bool GribFile::validateGridConsistency() const {
@@ -459,7 +795,8 @@ bool GribFile::performSequentialValidation(const std::string& filepath) const {
     std::unordered_set<size_t> gridHashes;
     for (const auto [key, fileLocs] : dimensionMessages_) {
         auto [timeInfo, memberNumber, variable, center] = key;
-        gridHashes.insert(computeGridHash(file, fileLocs));
+        CoordinateSystem fullCoords = buildMergedSystem(file, fileLocs);
+        gridHashes.insert(fullCoords.getGrid()->hash());
     }
 
     return gridHashes.size() == 1; // All hashes should be the same for a consistent grid
@@ -502,7 +839,8 @@ bool GribFile::performParallelValidation(const std::string& filepath) const {
                 };
                 std::unique_ptr<FILE, decltype(fileGuard)> fileCleanup(file, fileGuard);
 
-                return computeGridHash(file, fileLocs);
+                CoordinateSystem fullCoords = buildMergedSystem(file, fileLocs);
+                return fullCoords.getGrid()->hash();
             } catch (const std::exception& e) {
                 hadError = true;
                 std::cerr << "Exception in thread: " << e.what() << std::endl;

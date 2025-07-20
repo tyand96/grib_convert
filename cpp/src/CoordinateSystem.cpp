@@ -56,6 +56,7 @@ size_t CoordinateSystem::Grid::hash() const {
 std::unique_ptr<CoordinateSystem::Grid> CoordinateSystem::Grid::clone() const {
     auto clonedGrid = std::make_unique<Grid>();
     clonedGrid->points = points; // Copy the points.
+    clonedGrid->splitPoints_ = splitPoints_; // Copy the split points.
     return clonedGrid;
 }
 
@@ -69,7 +70,21 @@ CoordinateSystem::Grid CoordinateSystem::Grid::createRegularGrid(
             grid.points.insert({lat, lon});
         }
     }
+
+    std::vector<float> latitudesVec(latitudes.begin(), latitudes.end());
+    std::vector<float> longitudesVec(longitudes.begin(), longitudes.end());
+    std::sort(latitudesVec.begin(), latitudesVec.end(), 
+        [](float a, float b) { return b < a; }
+    );
+    std::sort(longitudesVec.begin(), longitudesVec.end());
+
+    grid.splitPoints_ = std::make_tuple(latitudesVec, longitudesVec);
+
     return grid;
+}
+
+std::tuple<std::vector<float>, std::vector<float>> CoordinateSystem::Grid::getSplitPoints() const {
+    return splitPoints_;
 }
 
 CoordinateSystem::CoordinateSystem()
@@ -203,6 +218,38 @@ std::string CoordinateSystem::getGridTypeString() const {
         default:
             return "undefined";
     }
+}
+
+std::vector<float> CoordinateSystem::getLatitudeValues() const {
+    if (!grid_) {
+        return {};
+    }
+
+    return std::get<0>(grid_->getSplitPoints());
+}
+
+std::vector<float> CoordinateSystem::getLongitudeValues() const {
+    if (!grid_) {
+        return {};
+    }
+
+    return std::get<1>(grid_->getSplitPoints());
+}
+
+std::unordered_set<Point> CoordinateSystem::getPoints() const {
+    if (!grid_) {
+        return {};
+    }
+
+    return grid_->points;
+}
+
+size_t CoordinateSystem::numPoints() const {
+    if (!grid_) {
+        return 0;
+    }
+
+    return grid_->points.size();
 }
 
 CoordinateSystem::GridType CoordinateSystem::stringToGridType(const std::string& gridTypeStr) {

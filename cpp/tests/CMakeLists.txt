@@ -16,10 +16,20 @@ if(NOT DEFINED PROJECT_NAME)
     )
 
     find_package(eccodes REQUIRED)
+    find_package(netCDF REQUIRED)
+    find_package(HDF5 REQUIRED)
+
+    # Find NetCDF C++ package
+    find_package(netCDF REQUIRED)
+    find_path(NETCDF_CXX_INCLUDE_DIR netcdf)
+    find_library(NETCDF_CXX_LIBRARY NAMES netcdf_c++4 netcdf-cxx4)
+
+    # Include directories
+    include_directories(${NETCDF_INCLUDE_DIRS} ${NETCDF_CXX_INCLUDE_DIR})
 
     add_library(grib_convert ${LIB_SOURCES})
     target_include_directories(grib_convert PUBLIC ${MAIN_PROJECT_DIR}/cpp/include)
-    target_link_libraries(grib_convert PRIVATE eccodes)
+    target_link_libraries(grib_convert PRIVATE eccodes netCDF::netcdf ${NETCDF_CXX_LIBRARY})
 
     enable_testing()
 else()

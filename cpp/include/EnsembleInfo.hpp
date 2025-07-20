@@ -18,4 +18,16 @@ struct EnsembleInfo{
 
 };
 
+namespace std {
+    template<>
+    struct hash<EnsembleInfo> {
+        size_t operator()(const EnsembleInfo& e) const {
+            size_t h1 = std::hash<unsigned int>{}(e.memberNumber);
+            size_t h2 = std::hash<TimeInfo>{}(e.initTime);
+
+            return h1 ^ (h2 << 1);
+        }
+    };
+}
+
 #endif // ENSEMBLE_INFO_HPP

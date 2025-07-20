@@ -25,14 +25,21 @@ struct TimeInfo {
     ): year(y), month(m), day(d), hour(h), timezone(tz) {}
 
     std::string to_string() const;
+    float toFloat() const;
+    bool isLeapYear() const;
+    TimeInfo toUTC() const;
 
     bool operator==(const TimeInfo& other) const;
     bool operator!=(const TimeInfo& other) const;
+
+    bool operator<(const TimeInfo& other) const;
+    bool operator>(const TimeInfo& other) const;
 
     friend struct std::hash<TimeInfo>;
 };
 
 std::string timezone_to_string(Timezone tz);
+int timezone_to_offset(Timezone tz);
 
 namespace std {
     template<>

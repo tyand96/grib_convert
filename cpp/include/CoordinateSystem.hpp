@@ -45,6 +45,7 @@ public:
         bool contains(const Grid& other) const;
         bool overlaps(const Grid& other) const;
         size_t hash() const;
+        std::tuple<std::vector<float>, std::vector<float>> getSplitPoints() const;     
 
         std::unique_ptr<Grid> clone() const;
 
@@ -52,6 +53,9 @@ public:
             const std::unordered_set<float>& latitudes,
             const std::unordered_set<float>& longitudes
         );
+
+    private:
+        std::tuple<std::vector<float>, std::vector<float>> splitPoints_;
     };
 
     // Constructors
@@ -83,6 +87,11 @@ public:
     bool isPointValid(const Point& point) const;
 
     std::string getGridTypeString() const;
+
+    std::vector<float> getLatitudeValues() const;
+    std::vector<float> getLongitudeValues() const;
+    std::unordered_set<Point> getPoints() const;
+    size_t numPoints() const;
 
     static GridType stringToGridType(const std::string& gridTypeStr);
 

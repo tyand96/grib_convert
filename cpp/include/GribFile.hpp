@@ -52,6 +52,8 @@ public:
     struct Metadata {
         std::set<Center> centers;
         std::set<Variable> variables;
+        std::unordered_set<TimeInfo> times;
+        std::unordered_set<EnsembleInfo> ensembles;
         size_t totalMessages;
         size_t estimatedMemorySize;
         CoordinateSystem coordinates;
@@ -63,6 +65,13 @@ public:
 
     class Iterator {
     public:
+        Iterator() : parent_(nullptr), currentIndex_(0), currentMessage_(nullptr) {}
+        Iterator(GribFile* parent, size_t index)
+            : parent_(parent),
+                currentIndex_(index),
+                currentMessage_(nullptr)
+            {}
+            
         Iterator& operator++();
         const GribMessage& operator*() const;
         bool operator!=(const Iterator& other) const;
@@ -88,7 +97,7 @@ public:
 
     Iterator begin();
     Iterator end();
-    void toNetCDF(const std::string& outputPath, size_t batchSize = 100) const;
+    void toNetCDF(const std::string& outputPath, size_t batchSize = 100, size_t numThreads = 0) const;
 
     bool validateGridConsistency() const;
 
@@ -119,20 +128,69 @@ private:
     };
     std::unique_ptr<MessageCache> messageCache_;
 
+    class FileGuard {
+    public:
+        FileGuard(const std::string& filepath);
+        ~FileGuard();
+
+        // No copying
+        FileGuard(const FileGuard&) = delete;
+        FileGuard& operator=(const FileGuard&) = delete;
+
+        // Allow move semantics
+        FileGuard(FileGuard&& other) noexcept;
+        FileGuard& operator=(FileGuard&& other) noexcept;
+
+        FILE* get() const { return file_; };
+        operator FILE*() const { return file_; };
+
+    private:
+        FILE* file_ = nullptr;
+    };
+
+    FileGuard openFile() const;
+
+    class CodesHandleGuard {
+    public:
+        CodesHandleGuard(FILE* file);
+        CodesHandleGuard(const FileGuard& fileGuard);
+        ~CodesHandleGuard();
+
+        // No copying
+        CodesHandleGuard(const CodesHandleGuard&) = delete;
+        CodesHandleGuard& operator=(const CodesHandleGuard&) = delete;
+
+        // Allow move semantics
+        CodesHandleGuard(CodesHandleGuard&& other) noexcept;
+        CodesHandleGuard& operator=(CodesHandleGuard&& other) noexcept;
+
+        codes_handle* get() const { return handle_; };
+        operator codes_handle*() const { return handle_; };
+
+    private:
+        codes_handle* handle_ = nullptr;
+    };
+
+    CodesHandleGuard getHandle(const FileGuard& fileGuard) const;
+
     void loadMetadata(bool validate);
     CoordinateSystem extractCoordinateSystem(codes_handle* h) const;
     CoordinateSystem extractRegularGrid(codes_handle* h) const;
     TimeInfo extractTimeInfo(codes_handle* h) const;
     EnsembleInfo extractEnsembleInfo(codes_handle *h) const;
+    Variable extractVariable(codes_handle* h) const;
+    Center extractCenter(codes_handle* h) const;
+    void extractData(codes_handle* h, size_t numValues, std::vector<double>& data) const;
     std::vector<std::string> getCompatibilityIssues() const;
-    std::shared_ptr<GribMessage> loadMessage(size_t index);
+    std::shared_ptr<GribMessage> loadMessage(size_t index) const noexcept;
     std::vector<size_t> getMessageIndicesByVariable(const Variable& var) const;
     void processMessageBatch(const std::vector<size_t>& indices, std::function<void(const GribMessage&)> processor);
 
     using DimensionKey = std::tuple<TimeInfo, unsigned int, Variable, Center>;
     using DimensionMap = std::unordered_map<DimensionKey, std::vector<off_t>>;
     DimensionMap dimensionMessages_;
-    size_t computeGridHash(FILE* file, const std::vector<off_t>& messageOffsets) const;
+    std::vector<off_t> messageOffsets_;
+    CoordinateSystem buildMergedSystem(FILE* file, const std::vector<off_t>& messageOffsets) const;
     bool performSequentialValidation(const std::string& filepath) const;
     bool performParallelValidation(const std::string& filepath) const;    
 };
